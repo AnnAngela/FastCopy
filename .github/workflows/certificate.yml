@@ -78,34 +78,29 @@ jobs:
         # 导出 CRT (公钥证书)
         Export-Certificate -Cert "Cert:\CurrentUser\My\$($cert.thumbprint)" -FilePath "FastCopy-CodeSigning.crt"
         
-        # 导出证书信息到文本文件
-        $certInfo = @"
-Certificate Information
-=======================
-Subject: $($cert.Subject)
-Issuer: $($cert.Issuer)
-Thumbprint: $($cert.Thumbprint)
-Serial Number: $($cert.SerialNumber)
-Not Before: $($cert.NotBefore)
-Not After: $($cert.NotAfter)
-Key Algorithm: $($cert.PublicKey.Oid.FriendlyName)
-Key Size: $($cert.PublicKey.Key.KeySize) bits
-
-Installation Instructions:
-=========================
-1. Install the certificate to Trusted Root Certification Authorities:
-   certlm.msc -> Trusted Root Certification Authorities -> Certificates -> Import FastCopy-CodeSigning.crt
-
-2. Or use PowerShell (Run as Administrator):
-   Import-Certificate -FilePath "FastCopy-CodeSigning.crt" -CertStoreLocation Cert:\LocalMachine\Root
-
-Usage for Signing:
-==================
-signtool sign /fd SHA256 /f "FastCopy-CodeSigning.pfx" /p "$env:CERTIFICATE_PASSWORD" "your-file.exe"
-
-"@
-        
-        $certInfo | Out-File -FilePath "Certificate-Info.txt" -Encoding UTF8
+        # 创建证书信息文本文件
+        echo "Certificate Information" > Certificate-Info.txt
+        echo "=======================" >> Certificate-Info.txt
+        echo "Subject: $($cert.Subject)" >> Certificate-Info.txt
+        echo "Issuer: $($cert.Issuer)" >> Certificate-Info.txt
+        echo "Thumbprint: $($cert.Thumbprint)" >> Certificate-Info.txt
+        echo "Serial Number: $($cert.SerialNumber)" >> Certificate-Info.txt
+        echo "Not Before: $($cert.NotBefore)" >> Certificate-Info.txt
+        echo "Not After: $($cert.NotAfter)" >> Certificate-Info.txt
+        echo "Key Algorithm: $($cert.PublicKey.Oid.FriendlyName)" >> Certificate-Info.txt
+        echo "Key Size: $($cert.PublicKey.Key.KeySize) bits" >> Certificate-Info.txt
+        echo "" >> Certificate-Info.txt
+        echo "Installation Instructions:" >> Certificate-Info.txt
+        echo "=========================" >> Certificate-Info.txt
+        echo "1. Install the certificate to Trusted Root Certification Authorities:" >> Certificate-Info.txt
+        echo "   certlm.msc -> Trusted Root Certification Authorities -> Certificates -> Import FastCopy-CodeSigning.crt" >> Certificate-Info.txt
+        echo "" >> Certificate-Info.txt
+        echo "2. Or use PowerShell (Run as Administrator):" >> Certificate-Info.txt
+        echo "   Import-Certificate -FilePath `"FastCopy-CodeSigning.crt`" -CertStoreLocation Cert:\LocalMachine\Root" >> Certificate-Info.txt
+        echo "" >> Certificate-Info.txt
+        echo "Usage for Signing:" >> Certificate-Info.txt
+        echo "==================" >> Certificate-Info.txt
+        echo "signtool sign /fd SHA256 /f `"FastCopy-CodeSigning.pfx`" /p `"`$env:CERTIFICATE_PASSWORD`" `"your-file.exe`"" >> Certificate-Info.txt
         
         echo "Certificate files created:"
         echo "- FastCopy-CodeSigning.pfx (Private key + Certificate)"
