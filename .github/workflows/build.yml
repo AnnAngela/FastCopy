@@ -1,0 +1,188 @@
+name: Build FastCopy
+
+on:
+  push:
+    branches: [ master, main ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ master, main ]
+  workflow_dispatch:
+
+env:
+  # vcpkg 配置
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+  
+  # 构建配置
+  BUILD_CONFIGURATION: Release
+  SOLUTION_FILE_PATH: ./FastCopy.sln
+  
+  # 证书配置
+  CERTIFICATE_NAME: FastCopy-SelfSigned
+  CERTIFICATE_PASSWORD: FastCopy123!
+
+jobs:
+  build:
+    runs-on: windows-latest
+    
+    strategy:
+      matrix:
+        platform: [x64, x86, arm64]
+        
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+        
+    - name: Setup MSBuild
+      uses: microsoft/setup-msbuild@v2
+      
+    - name: Setup vcpkg
+      uses: lukka/run-vcpkg@v11
+      with:
+        vcpkgGitCommitId: '3426db05b996481ca31e95fff3734cf23e0f51bc'
+        
+    - name: Export GitHub Actions cache environment variables
+      uses: actions/github-script@v7
+      with:
+        script: |
+          core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+          core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+          
+    - name: Install vcpkg dependencies
+      run: |
+        vcpkg install --triplet=${{ matrix.platform }}-windows
+      working-directory: ${{ github.workspace }}
+      
+    - name: Generate self-signed certificate
+      shell: powershell
+      run: |
+        # 创建自签名证书
+        $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject "CN=FastCopy Developer" -KeyAlgorithm RSA -KeyLength 2048 -Provider "Microsoft Enhanced RSA and AES Cryptographic Provider" -KeyExportPolicy Exportable -KeyUsage DigitalSignature -CertStoreLocation Cert:\CurrentUser\My
+        
+        # 导出证书到文件
+        $password = ConvertTo-SecureString -String "$env:CERTIFICATE_PASSWORD" -Force -AsPlainText
+        Export-PfxCertificate -cert "Cert:\CurrentUser\My\$($cert.thumbprint)" -FilePath "$env:CERTIFICATE_NAME.pfx" -Password $password
+        
+        # 将证书添加到受信任的根证书颁发机构存储区（用于本地测试）
+        Export-Certificate -Cert "Cert:\CurrentUser\My\$($cert.thumbprint)" -FilePath "$env:CERTIFICATE_NAME.crt"
+        Import-Certificate -FilePath "$env:CERTIFICATE_NAME.crt" -CertStoreLocation Cert:\LocalMachine\Root
+        Import-Certificate -FilePath "$env:CERTIFICATE_NAME.crt" -CertStoreLocation Cert:\LocalMachine\TrustedPublisher
+        
+        echo "Certificate generated successfully"
+        echo "Certificate thumbprint: $($cert.thumbprint)"
+        
+    - name: Update Package.appxmanifest with certificate info
+      shell: powershell
+      run: |
+        # 读取 Package.appxmanifest 文件
+        $manifestPath = "FastCopy\Package.appxmanifest"
+        [xml]$manifest = Get-Content $manifestPath
+        
+        # 更新 Publisher 信息以匹配证书
+        $manifest.Package.Identity.Publisher = "CN=FastCopy Developer"
+        
+        # 保存修改后的文件
+        $manifest.Save((Resolve-Path $manifestPath))
+        echo "Updated Package.appxmanifest with certificate publisher info"
+        
+    - name: Restore NuGet packages
+      run: nuget restore ${{ env.SOLUTION_FILE_PATH }}
+      
+    - name: Build solution
+      run: |
+        msbuild ${{ env.SOLUTION_FILE_PATH }} /m /p:Configuration=${{ env.BUILD_CONFIGURATION }} /p:Platform=${{ matrix.platform }} /p:AppxBundlePlatforms="${{ matrix.platform }}" /p:AppxPackageDir="${{ github.workspace }}\AppPackages\" /p:AppxBundle=Always /p:UapAppxPackageBuildMode=StoreUpload /p:PackageCertificateKeyFile="${{ env.CERTIFICATE_NAME }}.pfx" /p:PackageCertificatePassword=${{ env.CERTIFICATE_PASSWORD }}
+        
+    - name: Sign the package
+      shell: powershell
+      run: |
+        # 查找生成的 appx/appxbundle 文件
+        $packageFiles = Get-ChildItem -Path "AppPackages" -Recurse -Include "*.appx", "*.appxbundle", "*.msix", "*.msixbundle"
+        
+        foreach ($package in $packageFiles) {
+          echo "Signing package: $($package.FullName)"
+          & signtool sign /fd SHA256 /a /f "$env:CERTIFICATE_NAME.pfx" /p "$env:CERTIFICATE_PASSWORD" "$($package.FullName)"
+          
+          if ($LASTEXITCODE -eq 0) {
+            echo "Successfully signed: $($package.Name)"
+          } else {
+            echo "Failed to sign: $($package.Name)"
+          }
+        }
+        
+    - name: Verify package signatures
+      shell: powershell
+      run: |
+        $packageFiles = Get-ChildItem -Path "AppPackages" -Recurse -Include "*.appx", "*.appxbundle", "*.msix", "*.msixbundle"
+        
+        foreach ($package in $packageFiles) {
+          echo "Verifying signature for: $($package.Name)"
+          & signtool verify /pa "$($package.FullName)"
+        }
+        
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: FastCopy-${{ matrix.platform }}-${{ env.BUILD_CONFIGURATION }}
+        path: |
+          AppPackages/**/*
+          !AppPackages/**/*.pdb
+        retention-days: 30
+        
+    - name: Upload certificate (for debugging)
+      uses: actions/upload-artifact@v4
+      with:
+        name: Certificate-${{ matrix.platform }}
+        path: |
+          ${{ env.CERTIFICATE_NAME }}.pfx
+          ${{ env.CERTIFICATE_NAME }}.crt
+        retention-days: 7
+        
+  release:
+    needs: build
+    runs-on: windows-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts
+        
+    - name: Create release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          artifacts/FastCopy-*/**/*
+        draft: false
+        prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
+        generate_release_notes: true
+        name: FastCopy ${{ github.ref_name }}
+        body: |
+          ## FastCopy ${{ github.ref_name }}
+          
+          ### 📦 安装包
+          
+          - **x64**: 适用于 64 位 Windows 系统
+          - **x86**: 适用于 32 位 Windows 系统  
+          - **arm64**: 适用于 ARM64 Windows 系统
+          
+          ### 🔐 安全说明
+          
+          此版本使用自签名证书进行代码签名。首次安装时，Windows 可能会显示安全警告。
+          这是正常现象，因为证书不是由受信任的证书颁发机构签发的。
+          
+          ### 📋 安装说明
+          
+          1. 下载适合您系统架构的安装包
+          2. 右键点击 `.appx` 或 `.appxbundle` 文件
+          3. 选择"使用PowerShell安装"或使用应用安装程序
+          4. 如果遇到证书信任问题，请安装提供的 `.crt` 证书文件到"受信任的根证书颁发机构"
+          
+          ### 🛠️ 开发者信息
+          
+          - 构建时间: ${{ github.run_number }}
+          - 提交SHA: ${{ github.sha }}
+          - 分支: ${{ github.ref_name }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
