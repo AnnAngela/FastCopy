@@ -10,7 +10,7 @@ on:
 
 env:
   # vcpkg 配置
-  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+  VCPKG_BINARY_SOURCES: "clear;default,readwrite"
   
   # 构建配置
   BUILD_CONFIGURATION: Release
