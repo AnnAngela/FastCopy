@@ -51,8 +51,10 @@ jobs:
           
     - name: Install vcpkg dependencies
       run: |
-        vcpkg install --triplet=${{ matrix.platform }}-windows
+        vcpkg install --triplet=${{ matrix.platform }}-windows --x-manifest-root=${{ github.workspace }}
       working-directory: ${{ github.workspace }}
+      env:
+        VCPKG_FEATURE_FLAGS: manifests
       
     - name: Generate self-signed certificate
       shell: powershell
